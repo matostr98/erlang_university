@@ -5,8 +5,10 @@
 	init/2,
 	allowed_methods/2,
 	content_types_provided/2,
+	content_types_accepted/2,
 	% db_to_json/2,
-	db_to_text/2
+	db_to_text/2,
+	text_to_db/2
 ]).
 
 -record(state, {op}).
@@ -28,6 +30,13 @@ content_types_provided(Req, State) ->
     {[
     %   {<<"application/json">>, db_to_json},
       {<<"text/plain">>, db_to_text}
+     ], Req, State}.
+
+content_types_accepted(Req, State) ->
+    {[
+      {<<"text/plain">>, text_to_db},
+      %{<<"application/json">>, text_to_db}
+      {<<"application/x-www-form-urlencoded">>, text_to_db}
      ], Req, State}.
 
 % db_to_json(Req, #state{op=Op} = State) ->
@@ -52,6 +61,21 @@ db_to_text(Req, #state{op=Op} = State) ->
             get_help_text(Req, State)
     end,
     {Body, Req1, State1}.
+
+
+
+text_to_db(Req, #state{op=Op} = State) ->
+	io:format("text to db: ~p~n",[Op]),
+    {Body, Req1, State1} = case Op of
+        create ->
+            create_record_to_json(Req, State)
+		% ;
+        % delete ->
+        %     delete_record_to_json(Req, State);
+        % update ->
+        %     update_record_to_json(Req, State)
+    end,
+	{Body, Req1, State1}.
 
 % get_help(Req, State) ->
 	
@@ -89,8 +113,12 @@ io:format("Body: ~p~n",[Body]),
 get_record_list_text(Req, State) ->
     {ok, Recordfilename} = application:get_env(dance_club, records_file_name),
     dets:open_file(records_db, [{file, Recordfilename}, {type, set}]),
+	% {ok, Statefilename} = application:get_env(dance_club, state_file_name),
+	% dets:open_file(records_db, [{file, Statefilename}, {type, set}]),
+	io:format("in get fun:~n"),
     F1 = fun (Item, Acc) -> Acc1 = [Item | Acc], Acc1 end,
     Items = dets:foldl(F1, [], records_db),
+	io:format("Items: : ~p~n", [Items]),
     dets:close(records_db),
     F2 = fun ({Id, Rec}, Acc) ->
                  Val = io_lib:format("- ~s: ~s~n", [Id, Rec]),
@@ -104,3 +132,51 @@ list: ~p,
 ",
     Body1 = io_lib:format(Body, [Items3]),
     {Body1, Req, State}.
+
+create_record_to_json(Req, State) ->
+    {ok, Body, Req1} = cowboy_req:read_urlencoded_body(Req),
+	[{<<"content">>, Content}] = Body,
+	io:format("Content: ~p~n",[Content]),
+	RecordId = generate_id(),
+    % RecordId = "2",
+	io:format("Record id: ~p~n",[RecordId]),
+    {ok, Recordfilename} = application:get_env(dance_club, records_file_name),
+    {ok, _} = dets:open_file(records_db, [{file, Recordfilename}, {type, set}]),
+	io:format("opened file, state db: ~p~n", [records_db]),
+    ok = dets:insert(records_db, {RecordId, Content}),
+	io:format("inserted: ~p~n",[Content]),
+    ok = dets:sync(records_db),
+    ok = dets:close(records_db),
+	io:format("closed: ~p~n",[Content]),
+    case cowboy_req:method(Req1) of
+        <<"POST">> ->
+			io:format("post and record id: ~p~n", [RecordId]),
+            Response = io_lib:format("/get/~s", [RecordId]),
+			io:format("responde: ~p~n",[Response]),
+            {{true, list_to_binary(Response)}, Req1, State};
+        _ ->
+			io:format("no post: ~n"),
+            {true, Req1, State}
+    end.
+
+generate_id() ->
+	io:format("generate id~n"),
+    {ok, Statefilename} = application:get_env(dance_club, state_file_name),
+	io:format("Statefile name: ~p~n",[Statefilename]),
+    dets:open_file(state_db, [{file, Statefilename}, {type, set}]),
+	io:format("opened file, state db: ~p~n", [state_db]),
+	io:format("lookup: ~p~n",[dets:first(state_db)]),
+    Records = dets:lookup(state_db, current_id),
+	io:format("Records in id: ~p~n",[Records]),
+    Response = case Records of
+        [{current_id, CurrentId}] ->
+            NextId = CurrentId + 1,
+            %    CurrentId, NextId]),
+            dets:insert(state_db, {current_id, NextId}),
+            Id = lists:flatten(io_lib:format("id_~4..0B", [CurrentId])),
+            Id;
+        [] ->
+            error
+    end,
+    dets:close(state_db),
+    Response.

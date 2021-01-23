@@ -9,7 +9,7 @@ start(_Type, _Args) ->
         {'_', [
                {"/list", db_update_handler, [list]},
             %    {"/get/:record_id", db_update_handler, [get]},
-            %    {"/create", db_update_handler, [create]},
+               {"/create", db_update_handler, [create]},
             %    {"/update/:record_id", db_update_handler, [update]},
             %    {"/delete/:record_id", db_update_handler, [delete]},
                {"/help", db_update_handler, [help]},
