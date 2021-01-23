@@ -8,7 +8,9 @@
 	content_types_accepted/2,
 	% db_to_json/2,
 	db_to_text/2,
-	text_to_db/2
+	text_to_db/2,
+	resource_exists/2,
+	delete_resource/2
 ]).
 
 -record(state, {op}).
@@ -55,8 +57,8 @@ db_to_text(Req, #state{op=Op} = State) ->
     {Body, Req1, State1} = case Op of
         list ->
             get_record_list_text(Req, State);
-        % get ->
-        %     get_one_record_text(Req, State);
+        get ->
+            get_one_record_text(Req, State);
         help ->
             get_help_text(Req, State)
     end,
@@ -68,12 +70,11 @@ text_to_db(Req, #state{op=Op} = State) ->
 	io:format("text to db: ~p~n",[Op]),
     {Body, Req1, State1} = case Op of
         create ->
-            create_record_to_json(Req, State)
-		% ;
-        % delete ->
-        %     delete_record_to_json(Req, State);
-        % update ->
-        %     update_record_to_json(Req, State)
+            create_record_to_json(Req, State);
+        delete ->
+            delete_record_to_json(Req, State);
+        update ->
+            update_record_to_json(Req, State)
     end,
 	{Body, Req1, State1}.
 
@@ -133,6 +134,26 @@ list: ~p,
     Body1 = io_lib:format(Body, [Items3]),
     {Body1, Req, State}.
 
+get_one_record_text(Req, State) ->
+    RecordId = cowboy_req:binding(record_id, Req),
+    RecordId1 = binary_to_list(RecordId),
+    {ok, Recordfilename} = application:get_env(dance_club, records_file_name),
+    {ok, _} = dets:open_file(records_db, [{file, Recordfilename}, {type, set}]),
+    Records = dets:lookup(records_db, RecordId1),
+    ok = dets:close(records_db),
+    Body = case Records of
+        [{RecordId2, Data}] ->
+            io_lib:format("id: \"~s\", record: \"~s\"",
+                          [RecordId2, binary_to_list(Data)]);
+        [] ->
+            io_lib:format("{not_found: record ~p not found",
+                          [RecordId1]);
+        _ ->
+            io_lib:format("{extra_records: extra records for ~p",
+                          [RecordId1])
+    end,
+    {list_to_binary(Body), Req, State}.
+
 create_record_to_json(Req, State) ->
     {ok, Body, Req1} = cowboy_req:read_urlencoded_body(Req),
 	[{<<"content">>, Content}] = Body,
@@ -157,6 +178,105 @@ create_record_to_json(Req, State) ->
         _ ->
 			io:format("no post: ~n"),
             {true, Req1, State}
+    end.
+
+delete_record_to_json(Req, State) ->
+	io:format("delete: ~n"),
+    case cowboy_req:method(Req) of
+        <<"POST">> ->
+            RecId = cowboy_req:binding(record_id, Req),
+			io:format("recId: ~p~n", [RecId]),
+            RecId1 = binary_to_list(RecId),
+            {ok, Recordfilename} = application:get_env(
+                dance_club, records_file_name),
+            {ok, _} = dets:open_file(
+                records_db, [{file, Recordfilename}, {type, set}]),
+				io:format("opened file: ~p~n", [records_db]),
+            DBResponse = dets:lookup(records_db, RecId1),
+			io:format("DBResponse: ~p~n", [DBResponse]),
+            Result = case DBResponse of
+                [_] ->
+					io:format("result: ~p~n", [before_delete]),
+                    ok = dets:delete(records_db, RecId1),
+                    ok = dets:sync(records_db),
+                    Response = io_lib:format("/delete/~s", [RecId1]),
+                    Response1 = list_to_binary(Response),
+                    {{true, Response1}, Req, State};
+                [] ->
+                    {true, Req, State}
+            end,
+            ok = dets:close(records_db),
+            Result;
+        _ ->
+            {true, Req, State}
+    end.
+
+update_record_to_json(Req, State) ->
+    case cowboy_req:method(Req) of
+        <<"POST">> ->
+            RecId = cowboy_req:binding(record_id, Req),
+            RecId1 = binary_to_list(RecId),
+            {ok, Body, Req1} =
+                cowboy_req:read_urlencoded_body(Req),
+			io:format("update body ~p~n", [Body]),
+			[{<<"content">>, NewContent}] = Body,
+			io:format("update body ~p~n", [NewContent]),
+            {ok, Recordfilename} = application:get_env(
+                dance_club, records_file_name),
+            {ok, _} = dets:open_file(
+                records_db, [{file, Recordfilename}, {type, set}]),
+            DBResponse = dets:lookup(records_db, RecId1),
+            Result = case DBResponse of
+                [_] ->
+                    ok = dets:insert(records_db, {RecId1, NewContent}),
+                    ok = dets:sync(records_db),
+                    Response = io_lib:format("/get/~s", [RecId1]),
+                    Response1 = list_to_binary(Response),
+                    {{true, Response1}, Req1, State};
+                [] ->
+                    {true, Req1, State}
+            end,
+            ok = dets:close(records_db),
+            Result;
+        _ ->
+            {true, Req, State}
+    end.
+
+delete_resource(Req, State) ->
+    RecordId = cowboy_req:binding(record_id, Req),
+    RecordId1 = binary_to_list(RecordId),
+    {ok, Recordfilename} = application:get_env(dance_club, records_file_name),
+    {ok, _} = dets:open_file(records_db, [{file, Recordfilename}, {type, set}]),
+    Result = dets:delete(records_db, RecordId1),
+    ok = dets:close(records_db),
+    Response = case Result of
+        ok ->
+            true;
+        {error, _Reason} ->
+            false
+    end,
+    {Response, Req, State}.
+
+resource_exists(Req, State) ->
+    case cowboy_req:method(Req) of
+        <<"DELETE">> ->
+            RecordId = cowboy_req:binding(record_id, Req),
+            RecordId1 = binary_to_list(RecordId),
+            {ok, Recordfilename} = application:get_env(
+                 dance_club, records_file_name),
+            {ok, _} = dets:open_file(
+                records_db, [{file, Recordfilename}, {type, set}]),
+            Records = dets:lookup(records_db, RecordId1),
+            ok = dets:close(records_db),
+            Response = case Records of
+                [_] ->
+                    {true, Req, State};
+                _ ->
+                    {false, Req, State}
+            end,
+            Response;
+        _ ->
+            {true, Req, State}
     end.
 
 generate_id() ->

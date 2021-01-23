@@ -8,10 +8,10 @@ start(_Type, _Args) ->
 	    Dispatch = cowboy_router:compile([
         {'_', [
                {"/list", db_update_handler, [list]},
-            %    {"/get/:record_id", db_update_handler, [get]},
+               {"/get/:record_id", db_update_handler, [get]},
                {"/create", db_update_handler, [create]},
-            %    {"/update/:record_id", db_update_handler, [update]},
-            %    {"/delete/:record_id", db_update_handler, [delete]},
+               {"/update/:record_id", db_update_handler, [update]},
+               {"/delete/:record_id", db_update_handler, [delete]},
                {"/help", db_update_handler, [help]},
                {"/", db_update_handler, [help]}
               ]}
